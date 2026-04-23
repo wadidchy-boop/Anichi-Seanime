@@ -1,99 +1,140 @@
-/// <reference path="./online-streaming-provider.d.ts" />
+/// <reference path="./onlinestream-provider.d.ts" />
 
 /**
- * ShivraAnime - Seanime Online Streaming Provider
- * Source: https://shivraapi.my.id/otd (Otakudesu)
- * Indonesian subtitled anime
+ * Anichi (ShivraAPI / Otakudesu) - Seanime Online Streaming Provider
+ *
+ * Bridges the ShivraAPI used by anichi-cli into Seanime's streaming extension system.
+ * Source: https://shivraapi.my.id/otd  (wraps otakudesu.best)
+ *
+ * Note: Content is in Indonesian (sub/raw). Subs are in Bahasa Indonesia.
  */
 
-const BASE = "https://shivraapi.my.id/otd"
-
 class Provider {
+    private api = "https://shivraapi.my.id/otd"
 
     getSettings(): Settings {
         return {
-            supportsMultiLanguage: false,
-            supportsMultiServer: true,
-            serverList: ["DefaultStream", "odstream", "ondesuvip", "kraken", "mp4load"],
-            supportedTypes: [MediaFormat.TV, MediaFormat.MOVIE, MediaFormat.OVA, MediaFormat.ONA],
+            episodeServers: ["ShivraAPI"],
+            supportsDub: false,
         }
     }
 
+    /**
+     * Search for anime by title query.
+     * Seanime calls this with the anime's romaji/english title.
+     * Returns matched results so Seanime can find the right slug.
+     */
     async search(opts: SearchOptions): Promise<SearchResult[]> {
-        try {
-            const res = await fetch(`${BASE}/search?q=${encodeURIComponent(opts.query)}`)
-            const data = res.json() as any
-            const list = data?.data?.list ?? []
+        const query = encodeURIComponent(opts.query)
+        const res = await fetch(`${this.api}/search/${query}`)
+        if (!res.ok) return []
 
-            return list.map((item: any) => ({
-                id: item.slug,
-                title: item.title,
-                url: item.url,
-                image: item.cover,
-                year: null,
-            }))
-        } catch (e) {
-            return []
+        const json = await res.json() as any
+        const list: any[] = json?.data?.animeList ?? []
+
+        const results: SearchResult[] = []
+        for (const item of list) {
+            results.push({
+                id: item.slug ?? item.endpoint,          // e.g. "shaman-king-sub-indo"
+                title: item.title ?? item.name ?? "",
+                url: item.endpoint ?? item.slug ?? "",
+                isSub: true,
+                isDub: false,
+            })
         }
+        return results
     }
 
+    /**
+     * Given the anime ID (slug), return an episode list.
+     * Seanime uses this to list episodes for the user to pick from.
+     */
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        try {
-            const res = await fetch(`${BASE}/anime/${id}`)
-            const data = res.json() as any
-            const eps = data?.data?.episode_list ?? []
+        // The detail endpoint returns episode list
+        const res = await fetch(`${this.api}/anime/${id}`)
+        if (!res.ok) return []
 
-            return eps.map((ep: any, i: number) => ({
-                id: ep.slug,
-                number: i + 1,
-                url: ep.url,
-                title: ep.title || `Episode ${i + 1}`,
-            }))
-        } catch (e) {
-            return []
+        const json = await res.json() as any
+        const epList: any[] = json?.data?.episodeList ?? []
+
+        const episodes: EpisodeDetails[] = []
+        for (const ep of epList) {
+            // episodeList items typically have: { episode, slug, endpoint }
+            const epNum = this.parseEpNumber(ep.episode ?? ep.title ?? "")
+            episodes.push({
+                id: ep.slug ?? ep.endpoint ?? String(epNum),
+                number: epNum,
+                url: ep.endpoint ?? ep.slug ?? "",
+                title: ep.episode ?? ep.title ?? `Episode ${epNum}`,
+                isSub: true,
+                isDub: false,
+            })
         }
+
+        // Sort ascending by episode number
+        episodes.sort((a, b) => a.number - b.number)
+        return episodes
     }
 
-    async findEpisodeServer(id: string, server: string): Promise<EpisodeServer> {
-        try {
-            const res = await fetch(`${BASE}/episode/${id}`)
-            const data = res.json() as any
-            const epData = data?.data
+    /**
+     * Given the episode ID (slug), return video sources for playback.
+     * Seanime calls this when the user picks an episode.
+     */
+    async findEpisodeServer(ep: EpisodeDetails, _server: string): Promise<EpisodeServer> {
+        const res = await fetch(`${this.api}/episode/${ep.id}`)
+        if (!res.ok) {
+            return { headers: {}, sources: [], subtitles: [] }
+        }
 
-            if (!epData) return { sources: [], subtitles: [] }
+        const json = await res.json() as any
 
-            const sources: EpisodeServerSource[] = []
+        // ShivraAPI returns mirror links in data.mirrors or data.streamingLink
+        const mirrors: any[] = json?.data?.mirrors ?? json?.data?.streamingLink ?? []
+        const sources: VideoSource[] = []
 
-            // Add default streaming source
-            if (epData.defaultstreaming) {
+        for (const mirror of mirrors) {
+            const url = mirror.url ?? mirror.src ?? mirror.link ?? ""
+            if (!url) continue
+
+            // Determine quality label
+            const quality = mirror.quality ?? mirror.res ?? mirror.label ?? "default"
+            const isM3u8 = url.includes(".m3u8")
+
+            sources.push({
+                url,
+                quality,
+                isM3u8,
+            })
+        }
+
+        // Fallback: try direct streaming URL fields
+        if (sources.length === 0) {
+            const direct = json?.data?.streamUrl ?? json?.data?.url ?? ""
+            if (direct) {
                 sources.push({
-                    url: epData.defaultstreaming,
-                    quality: "auto",
-                    isM3U8: false,
+                    url: direct,
+                    quality: "default",
+                    isM3u8: direct.includes(".m3u8"),
                 })
             }
+        }
 
-            // Add quality-specific sources matching the requested server
-            const streams = epData.stream ?? []
-            for (const stream of streams) {
-                const providers = stream.providers ?? []
-                for (const p of providers) {
-                    if (!server || server === "DefaultStream" || p.provider?.toLowerCase().includes(server.toLowerCase())) {
-                        sources.push({
-                            url: p.url,
-                            quality: stream.quality ?? "auto",
-                            isM3U8: false,
-                        })
-                    }
-                }
-            }
-
-            return {
-                sources,
-                subtitles: [],
-            }
-        } catch (e) {
-            return { sources: [], subtitles: [] }
+        return {
+            headers: {
+                "Referer": "https://otakudesu.best/",
+            },
+            sources,
+            subtitles: [],
         }
     }
+
+    // ─── Helpers ────────────────────────────────────────────────────────────────
+
+    private parseEpNumber(str: string): number {
+        // Try to extract a number from strings like "Episode 5", "Ep 12", "5", etc.
+        const match = str.match(/(\d+(?:\.\d+)?)/)
+        if (match) return parseFloat(match[1])
+        return 0
+    }
 }
+
