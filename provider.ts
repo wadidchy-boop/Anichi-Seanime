@@ -1,89 +1,155 @@
-async findEpisodeServer(ep: EpisodeDetails, server: string): Promise<EpisodeServer> {
-    const empty = { server, headers: {}, videoSources: [] }
+class Provider {
+    api = "https://gogoanime.by"
 
-    // Step 1: Get the episode page
-    const res = await fetch(`${this.api}/${ep.id}`, {
-        headers: { "User-Agent": "Mozilla/5.0" }
-    })
-    if (!res.ok) return empty
-    const html = await res.text()
-
-    // Step 2: Find the outer player iframe (player.php)
-    const outerIframeMatch = html.match(/https:\/\/9animetv\.be[^"'\s]+player\.php\?[^"'\s]+Blogger=[^"'\s]+/)
-        || html.match(/src="(https:\/\/9animetv\.be[^"]+player\.php[^"]+)"/)
-    if (!outerIframeMatch) return empty
-    const outerPlayerUrl = outerIframeMatch[0].startsWith("http")
-        ? outerIframeMatch[0]
-        : outerIframeMatch[1]
-
-    // Step 3: Fetch outer player.php to get the n-bg/player.php iframe URL
-    const outerRes = await fetch(outerPlayerUrl, {
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": this.api,
+    getSettings(): Settings {
+        return {
+            episodeServers: ["Gogoanime"],
+            supportsDub: true,
         }
-    })
-    if (!outerRes.ok) return empty
-    const outerHtml = await outerRes.text()
-
-    // Step 4: Extract the inner n-bg/player.php iframe src
-    const innerIframeMatch = outerHtml.match(/src="(https:\/\/9animetv\.be[^"]+n-bg\/player\.php[^"]+)"/)
-        || outerHtml.match(/(https:\/\/9animetv\.be[^"'\s]+n-bg\/player\.php[^"'\s]+)/)
-    if (!innerIframeMatch) return empty
-    const innerPlayerUrl = innerIframeMatch[1]
-
-    // Step 5: Fetch n-bg/player.php — this contains the final googlevideo URL directly in HTML
-    const innerRes = await fetch(innerPlayerUrl, {
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://9animetv.be/",
-        }
-    })
-    if (!innerRes.ok) return empty
-    const innerHtml = await innerRes.text()
-
-    // Step 6: Parse the jwplayer sources array from the HTML
-    // Format: var sources = [{"file":"https://...googlevideo...","type":"mp4","label":"360p"}];
-    const sources: { url: string, quality: string, type: VideoSourceType }[] = []
-
-    const sourcesBlockMatch = innerHtml.match(/var\s+sources\s*=\s*(\[[\s\S]*?\]);/)
-    if (sourcesBlockMatch) {
-        try {
-            const parsed: { file: string, type?: string, label?: string }[] = JSON.parse(sourcesBlockMatch[1])
-            for (const s of parsed) {
-                if (s.file) {
-                    sources.push({
-                        url: s.file,
-                        quality: s.label || "auto",
-                        type: (s.type === "mp4" || s.file.includes(".mp4") ? "mp4"
-                            : s.file.includes(".m3u8") ? "m3u8"
-                            : "mp4") as VideoSourceType,
-                    })
-                }
-            }
-        } catch (_) { /* fall through to regex fallback */ }
     }
 
-    // Fallback: grab fileUrl variable if sources array parse failed
-    if (sources.length === 0) {
-        const fileUrlMatch = innerHtml.match(/var\s+fileUrl\s*=\s*"([^"]+)"/)
-        if (fileUrlMatch) {
-            sources.push({
-                url: fileUrlMatch[1],
-                quality: "auto",
-                type: (fileUrlMatch[1].includes(".m3u8") ? "m3u8" : "mp4") as VideoSourceType,
+    async search(opts: SearchOptions): Promise<SearchResult[]> {
+        const q = encodeURIComponent(opts.query)
+        const res = await fetch(`${this.api}/search.html?keyword=${q}`, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+        })
+        if (!res.ok) return []
+        const html = await res.text()
+        const results: SearchResult[] = []
+        const regex = /href="\/category\/([^"]+)"[^>]*title="([^"]+)"/g
+        let match
+        while ((match = regex.exec(html)) !== null) {
+            const id = match[1]
+            const title = match[2]
+            results.push({
+                id,
+                title,
+                url: `${this.api}/category/${id}`,
+                subOrDub: id.includes("-dub") ? "dub" : "sub",
             })
         }
+        return results
     }
 
-    if (sources.length === 0) return empty
+    async findEpisodes(id: string): Promise<EpisodeDetails[]> {
+        const res = await fetch(`${this.api}/category/${id}`, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+        })
+        if (!res.ok) return []
+        const html = await res.text()
+        const animeIdMatch = html.match(/value="(\d+)" id="movie_id"/)
+        if (!animeIdMatch) return []
+        const animeId = animeIdMatch[1]
+        const epEndMatch = html.match(/ep_end\s*=\s*"(\d+)"/)
+        const epStartMatch = html.match(/ep_start\s*=\s*"(\d+)"/)
+        if (!epEndMatch) return []
+        const epEnd = epEndMatch[1]
+        const epStart = epStartMatch ? epStartMatch[1] : "0"
+        const epRes = await fetch(
+            `https://ajax.gogocdn.net/ajax/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${animeId}`,
+            { headers: { "User-Agent": "Mozilla/5.0" } }
+        )
+        if (!epRes.ok) return []
+        const epHtml = await epRes.text()
+        const episodes: EpisodeDetails[] = []
+        const epRegex = /href="\/([^"]+)"\s*>\s*<div[^>]*>\s*EP\s*<span[^>]*>([^<]+)<\/span>/g
+        let epMatch
+        while ((epMatch = epRegex.exec(epHtml)) !== null) {
+            const epSlug = epMatch[1].trim()
+            const epNum = parseInt(epMatch[2].trim())
+            episodes.push({
+                id: epSlug,
+                number: epNum,
+                url: `${this.api}/${epSlug}`,
+                title: `Episode ${epNum}`,
+            })
+        }
+        episodes.sort((a, b) => a.number - b.number)
+        return episodes
+    }
 
-    return {
-        server,
-        headers: {
-            "Referer": "https://9animetv.be/",
-            "User-Agent": "Mozilla/5.0",
-        },
-        videoSources: sources,
+    async findEpisodeServer(ep: EpisodeDetails, server: string): Promise<EpisodeServer> {
+        const empty = { server, headers: {}, videoSources: [] }
+
+        // Step 1: Get the episode page
+        const res = await fetch(`${this.api}/${ep.id}`, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+        })
+        if (!res.ok) return empty
+        const html = await res.text()
+
+        // Step 2: Find the outer 9animetv player.php iframe URL
+        const outerMatch = html.match(/src="(https:\/\/9animetv\.be[^"]+player\.php[^"]+)"/)
+            || html.match(/(https:\/\/9animetv\.be[^"'\s]+player\.php[^"'\s]+)/)
+        if (!outerMatch) return empty
+        const outerPlayerUrl = outerMatch[1]
+
+        // Step 3: Fetch outer player.php to get the n-bg/player.php iframe
+        const outerRes = await fetch(outerPlayerUrl, {
+            headers: {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": this.api,
+            }
+        })
+        if (!outerRes.ok) return empty
+        const outerHtml = await outerRes.text()
+
+        // Step 4: Extract the inner n-bg/player.php URL
+        const innerMatch = outerHtml.match(/src="(https:\/\/9animetv\.be[^"]+n-bg\/player\.php[^"]+)"/)
+            || outerHtml.match(/(https:\/\/9animetv\.be[^"'\s]+n-bg\/player\.php[^"'\s]+)/)
+        if (!innerMatch) return empty
+        const innerPlayerUrl = innerMatch[1]
+
+        // Step 5: Fetch n-bg/player.php — googlevideo URL is plaintext in the HTML
+        const innerRes = await fetch(innerPlayerUrl, {
+            headers: {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://9animetv.be/",
+            }
+        })
+        if (!innerRes.ok) return empty
+        const innerHtml = await innerRes.text()
+
+        // Step 6: Parse jwplayer sources array
+        const sources: { url: string, quality: string, type: VideoSourceType }[] = []
+
+        const sourcesMatch = innerHtml.match(/var\s+sources\s*=\s*(\[[\s\S]*?\]);/)
+        if (sourcesMatch) {
+            try {
+                const parsed: { file: string, type?: string, label?: string }[] = JSON.parse(sourcesMatch[1])
+                for (const s of parsed) {
+                    if (s.file) {
+                        sources.push({
+                            url: s.file,
+                            quality: s.label || "auto",
+                            type: (s.file.includes(".m3u8") ? "m3u8" : "mp4") as VideoSourceType,
+                        })
+                    }
+                }
+            } catch (_) {}
+        }
+
+        // Fallback: grab single fileUrl variable
+        if (sources.length === 0) {
+            const fileUrlMatch = innerHtml.match(/var\s+fileUrl\s*=\s*"([^"]+)"/)
+            if (fileUrlMatch) {
+                sources.push({
+                    url: fileUrlMatch[1],
+                    quality: "auto",
+                    type: (fileUrlMatch[1].includes(".m3u8") ? "m3u8" : "mp4") as VideoSourceType,
+                })
+            }
+        }
+
+        if (sources.length === 0) return empty
+
+        return {
+            server,
+            headers: {
+                "Referer": "https://9animetv.be/",
+                "User-Agent": "Mozilla/5.0",
+            },
+            videoSources: sources,
+        }
     }
 }
