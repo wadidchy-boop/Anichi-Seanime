@@ -1,4 +1,5 @@
 class Provider {
+    // Updated base API to gogoanime.by
     api = "https://gogoanime.by"
 
     getSettings(): Settings {
@@ -11,11 +12,12 @@ class Provider {
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         const q = encodeURIComponent(opts.query)
         const res = await fetch(`${this.api}/search.html?keyword=${q}`, {
-            headers: { "User-Agent": "Mozilla/5.0" }
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
         })
         if (!res.ok) return []
         const html = await res.text()
         const results: SearchResult[] = []
+        // Regex adjusted for gogoanime.by category links
         const regex = /href="\/category\/([^"]+)"[^>]*title="([^"]+)"/g
         let match
         while ((match = regex.exec(html)) !== null) {
@@ -37,17 +39,23 @@ class Provider {
         })
         if (!res.ok) return []
         const html = await res.text()
+        
+        // Extract internal movie_id for AJAX episode list
         const animeIdMatch = html.match(/value="(\d+)" id="movie_id"/)
         if (!animeIdMatch) return []
         const animeId = animeIdMatch[1]
+
+        // Handle episode ranges
         const epEndMatch = html.match(/ep_end\s*=\s*"(\d+)"/)
         const epStartMatch = html.match(/ep_start\s*=\s*"(\d+)"/)
         if (!epEndMatch) return []
         const epEnd = epEndMatch[1]
         const epStart = epStartMatch ? epStartMatch[1] : "0"
+
+        // Fetch episode list via AJAX endpoint
         const epRes = await fetch(
             `https://ajax.gogocdn.net/ajax/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${animeId}`,
-            { headers: { "User-Agent": "Mozilla/5.0" } }
+            { headers: { "User-Agent": "Mozilla/5.0", "Referer": this.api } }
         )
         if (!epRes.ok) return []
         const epHtml = await epRes.text()
@@ -70,26 +78,34 @@ class Provider {
 
     async findEpisodeServer(ep: EpisodeDetails, server: string): Promise<EpisodeServer> {
         const empty = { server, headers: {}, videoSources: [] }
+        
+        // 1. Fetch the episode page to find the video host
         const res = await fetch(`${this.api}/${ep.id}`, {
-            headers: { "User-Agent": "Mozilla/5.0" }
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
         })
         if (!res.ok) return empty
         const html = await res.text()
-        const iframeMatch = html.match(/data-video="([^"]+)"/)
+
+        // 2. Extract the video player iframe URL (handles data-video or src)
+        const iframeMatch = html.match(/<iframe [^>]*src="([^"]+)"/i) || html.match(/data-video="([^"]+)"/i)
         if (!iframeMatch) return empty
-        const iframeUrl = iframeMatch[1].startsWith("//")
-            ? "https:" + iframeMatch[1]
-            : iframeMatch[1]
+        
+        let iframeUrl = iframeMatch[1]
+        if (iframeUrl.startsWith("//")) iframeUrl = "https:" + iframeUrl
+
+        // 3. Extract the final m3u8 source from the iframe host
         const iframeRes = await fetch(iframeUrl, {
-            headers: {
-                "User-Agent": "Mozilla/5.0",
-                "Referer": this.api,
-            }
+            headers: { "Referer": this.api, "User-Agent": "Mozilla/5.0" }
         })
         if (!iframeRes.ok) return empty
         const iframeHtml = await iframeRes.text()
-        const m3u8Match = iframeHtml.match(/file:\s*"([^"]+\.m3u8[^"]*)"/i)
+
+        // Robust regex to find .m3u8 links within the player script
+        const m3u8Regex = /(https?:\/\/[^"']+\.m3u8[^"']*)/i
+        const m3u8Match = iframeHtml.match(m3u8Regex)
+
         if (!m3u8Match) return empty
+
         return {
             server,
             headers: {
