@@ -3,7 +3,7 @@
   "name": "Gogoanime",
   "description": "Stream anime from Gogoanime. Supports both sub and dub.",
   "manifestURI": "https://raw.githubusercontent.com/wadidchy-boop/Anichi-Seanime/main/anichi-shivraapi.json",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "shditz",
   "type": "onlinestream-provider",
   "language": "typescript",
