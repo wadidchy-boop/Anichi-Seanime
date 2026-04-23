@@ -1,5 +1,5 @@
 class Provider {
-    api = "https://gogoanime3.co"
+    api = "https://gogoanime.by"
 
     getSettings(): Settings {
         return {
