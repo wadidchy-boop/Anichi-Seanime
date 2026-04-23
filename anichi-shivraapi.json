@@ -2,7 +2,7 @@
   "id": "anichi-shivraapi",
   "name": "Anichi (ShivraAPI)",
   "description": "Streams anime from Otakudesu via ShivraAPI — the same backend used by anichi-cli. Content is in Indonesian (Bahasa Indonesia subs).",
-  "manifestURI": "",
+  "manifestURI": "https://raw.githubusercontent.com/wadidchy-boop/Anichi-Seanime/main/anichi-shivraapi.json",
   "version": "1.0.0",
   "author": "shditz",
   "type": "onlinestream-provider",
