@@ -37,96 +37,44 @@ class Provider {
     }
 
     async findEpisodes(id) {
-        console.log("🔍 DEBUG: findEpisodes called with id:", id)
-        
         const res = await fetch(`${this.api}/${id}/`, {
             headers: { "User-Agent": "Mozilla/5.0" }
         })
-        
-        console.log("📡 DEBUG: Fetch status:", res.status)
-        
-        if (!res.ok) {
-            console.log("❌ DEBUG: Response not OK")
-            return []
-        }
-        
+        if (!res.ok) return []
         const html = await res.text()
-        console.log("📄 DEBUG: HTML length:", html.length)
-        
         const episodes = []
 
-        // Try Method 1: Original regex
-        console.log("🔧 DEBUG: Trying regex method...")
-        const liRegex = /<li[^>]*data-id="(\d+)"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*title="([^"]+)"/g
+        const parser = new DOMParser()
+        const doc = parser.parseFromString(html, 'text/html')
+        const liElements = doc.querySelectorAll('li[data-id]')
         
-        let match
-        let regexMatches = 0
-        while ((match = liRegex.exec(html)) !== null) {
-            regexMatches++
-            console.log(`✅ DEBUG: Regex match #${regexMatches}`, {
-                postId: match[1],
-                url: match[2],
-                title: match[3]
+        liElements.forEach((li) => {
+            const postId = li.getAttribute('data-id')
+            const aTag = li.querySelector('a[href]')
+            
+            if (!aTag) return
+            
+            const url = aTag.getAttribute('href')?.trim()
+            const title = aTag.getAttribute('title')?.trim()
+            
+            if (!url || !title) return
+
+            const epNumMatch = title.match(/[Ee]pisode\s+(\d+)/) || url.match(/episode-(\d+)/)
+            if (!epNumMatch) return
+            
+            const epNum = parseInt(epNumMatch[1])
+
+            const slugMatch = url.match(/animefox\.com\.co\/([^\/]+)\/$/)
+            const slug = slugMatch ? slugMatch[1] : postId
+
+            episodes.push({
+                id: slug + "|" + postId,
+                number: epNum,
+                url: url,
+                title: `Episode ${epNum}`,
             })
-        }
-        console.log("📊 DEBUG: Total regex matches:", regexMatches)
+        })
 
-        // Try Method 2: DOM-based parsing as fallback
-        console.log("🔧 DEBUG: Trying DOM method...")
-        if (regexMatches === 0) {
-            console.log("⚠️ DEBUG: Regex found no matches, trying alternative method")
-            
-            // Use DOMParser to parse HTML
-            const parser = new DOMParser()
-            const doc = parser.parseFromString(html, 'text/html')
-            const liElements = doc.querySelectorAll('li[data-id]')
-            
-            console.log("📊 DEBUG: Found", liElements.length, "li elements with data-id")
-            
-            liElements.forEach((li, idx) => {
-                const postId = li.getAttribute('data-id')
-                const aTag = li.querySelector('a[href]')
-                
-                if (!aTag) {
-                    console.log(`❌ DEBUG: Episode ${idx} has no <a> tag`)
-                    return
-                }
-                
-                const url = aTag.getAttribute('href').trim()
-                const title = aTag.getAttribute('title')?.trim() || ""
-                
-                console.log(`📋 DEBUG: Episode ${idx}:`, { postId, url, title })
-                
-                if (!title) {
-                    console.log(`❌ DEBUG: Episode ${idx} has no title`)
-                    return
-                }
-
-                // Extract episode number
-                const epNumMatch = title.match(/[Ee]pisode\s+(\d+)/) || url.match(/episode-(\d+)/)
-                if (!epNumMatch) {
-                    console.log(`❌ DEBUG: Episode ${idx} - no episode number found in title or URL`)
-                    return
-                }
-                
-                const epNum = parseInt(epNumMatch[1])
-                console.log(`✅ DEBUG: Episode ${idx} - Episode number: ${epNum}`)
-
-                const slugMatch = url.match(/animefox\.com\.co\/([^\/]+)\/$/)
-                const slug = slugMatch ? slugMatch[1] : postId
-
-                episodes.push({
-                    id: slug + "|" + postId,
-                    number: epNum,
-                    url: url,
-                    title: `Episode ${epNum}`,
-                })
-            })
-        }
-
-        console.log("📺 DEBUG: Total episodes found:", episodes.length)
-        console.log("📋 DEBUG: Episodes array:", episodes)
-        
         episodes.sort((a, b) => a.number - b.number)
         return episodes
     }
@@ -138,53 +86,125 @@ class Provider {
         const slug = parts[0]
         const epUrl = ep.url || `${this.api}/${slug}/`
 
-        const res = await fetch(epUrl, {
-            headers: { "User-Agent": "Mozilla/5.0" }
-        })
-        if (!res.ok) return empty
-        const html = await res.text()
+        try {
+            const res = await fetch(epUrl, {
+                headers: { "User-Agent": "Mozilla/5.0" }
+            })
+            if (!res.ok) return empty
+            const html = await res.text()
 
-        const optionMatch = html.match(/option[^>]*value="([A-Za-z0-9+\/=]{30,})"/)
-        if (!optionMatch) return empty
+            // Try to find the video URL directly from the page
+            // Look for various video player patterns
+            
+            // Pattern 1: Look for data-video attribute
+            const videoMatch = html.match(/data-video="([^"]+)"/)
+            if (videoMatch) {
+                const hash = videoMatch[1]
+                return await this.getVideoFromHash(hash, epUrl, server, empty)
+            }
 
-        let decoded
-        try { decoded = atob(optionMatch[1]) } catch(e) { return empty }
+            // Pattern 2: Look for iframe sources
+            const iframeMatch = html.match(/src="(https:\/\/[^"]*(?:rumble|embed|player)[^"]+)"/i)
+            if (iframeMatch) {
+                const streamUrl = iframeMatch[1]
+                if (streamUrl.includes('rumble.com')) {
+                    return {
+                        server,
+                        headers: {
+                            "Referer": "https://rumble.com/",
+                            "User-Agent": "Mozilla/5.0",
+                        },
+                        videoSources: [{
+                            url: streamUrl,
+                            quality: "auto",
+                            type: "m3u8",
+                        }],
+                    }
+                }
+            }
 
-        const hashMatch = decoded.match(/data-video="([^"]+)"/)
-        if (!hashMatch) return empty
-        const hash = hashMatch[1]
+            // Pattern 3: Look for mp4 links
+            const mp4Match = html.match(/https:\/\/[^"\s]+\.mp4/i)
+            if (mp4Match) {
+                return {
+                    server,
+                    headers: {
+                        "Referer": epUrl,
+                        "User-Agent": "Mozilla/5.0",
+                    },
+                    videoSources: [{
+                        url: mp4Match[0],
+                        quality: "auto",
+                        type: "mp4",
+                    }],
+                }
+            }
 
-        const ajaxRes = await fetch(`${this.api}/wp-admin/admin-ajax.php`, {
-            method: "POST",
-            headers: {
-                "User-Agent": "Mozilla/5.0",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": epUrl,
-                "X-Requested-With": "XMLHttpRequest",
-            },
-            body: `action=as_load_player&hash=${encodeURIComponent(hash)}`
-        })
-        if (!ajaxRes.ok) return empty
-        const ajaxHtml = await ajaxRes.text()
+            return empty
+        } catch (error) {
+            return empty
+        }
+    }
 
-        const iframeMatch = ajaxHtml.match(/src="(https:\/\/embed\.animehi\.co\/embed\/v([^"]+))"/)
-        if (!iframeMatch) return empty
-        const videoId = iframeMatch[2]
+    async getVideoFromHash(hash, epUrl, server, empty) {
+        try {
+            const ajaxRes = await Promise.race([
+                fetch(`${this.api}/wp-admin/admin-ajax.php`, {
+                    method: "POST",
+                    headers: {
+                        "User-Agent": "Mozilla/5.0",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Referer": epUrl,
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    body: `action=as_load_player&hash=${encodeURIComponent(hash)}`
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+            ])
 
-        const rumbleId = videoId.startsWith("v") ? videoId.substring(1) : videoId
-        const streamUrl = `https://rumble.com/hls-vod/${rumbleId}/playlist.m3u8`
+            if (!ajaxRes.ok) return empty
+            const ajaxHtml = await ajaxRes.text()
 
-        return {
-            server,
-            headers: {
-                "Referer": "https://embed.animehi.co/",
-                "User-Agent": "Mozilla/5.0",
-            },
-            videoSources: [{
-                url: streamUrl,
-                quality: "auto",
-                type: "m3u8",
-            }],
+            // Look for embed URL
+            const iframeMatch = ajaxHtml.match(/src="(https:\/\/[^"]+)"/i)
+            if (!iframeMatch) return empty
+
+            const videoUrl = iframeMatch[1]
+            
+            if (videoUrl.includes('rumble.com')) {
+                const rumbleMatch = videoUrl.match(/\/v(\w+)/)
+                if (rumbleMatch) {
+                    const rumbleId = rumbleMatch[1]
+                    const streamUrl = `https://rumble.com/hls-vod/${rumbleId}/playlist.m3u8`
+                    return {
+                        server,
+                        headers: {
+                            "Referer": "https://rumble.com/",
+                            "User-Agent": "Mozilla/5.0",
+                        },
+                        videoSources: [{
+                            url: streamUrl,
+                            quality: "auto",
+                            type: "m3u8",
+                        }],
+                    }
+                }
+            }
+
+            return {
+                server,
+                headers: {
+                    "Referer": videoUrl,
+                    "User-Agent": "Mozilla/5.0",
+                },
+                videoSources: [{
+                    url: videoUrl,
+                    quality: "auto",
+                    type: "m3u8",
+                }],
+            }
+        } catch (error) {
+            return empty
         }
     }
 }
