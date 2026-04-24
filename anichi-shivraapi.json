@@ -9,5 +9,4 @@
   "language": "javascript",
   "type": "onlinestream-provider",
   "payloadURI": "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/provider.js",
-  "payload": ""
 }
