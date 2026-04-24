@@ -37,7 +37,6 @@ class Provider {
     }
 
     async findEpisodes(id) {
-        // Fetch any episode or series page - all have the full episode list as li[data-id]
         const res = await fetch(`${this.api}/${id}/`, {
             headers: { "User-Agent": "Mozilla/5.0" }
         })
@@ -45,8 +44,10 @@ class Provider {
         const html = await res.text()
         const episodes = []
 
-        // <li data-id="5599" ...><a href="...url..." itemprop="url" title="Yi Ren Zhi Xia 6 Episode 19 English Sub">
-        const liRegex = /<li[^>]*data-id="(\d+)"[^>]*>[\s\S]*?href="([^"]+)"[^>]*title="([^"]+)"/g
+        // Match: <li data-id="NUMBER"> ... <a ... href="URL" ... title="TITLE">
+        // The key is: title is on the <a> tag, after href
+        const liRegex = /<li[^>]*data-id="(\d+)"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*title="([^"]+)"/g
+        
         let match
         while ((match = liRegex.exec(html)) !== null) {
             const postId = match[1]
