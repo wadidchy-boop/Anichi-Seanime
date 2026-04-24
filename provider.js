@@ -16,39 +16,51 @@ class Provider {
         if (!res.ok) return []
         const html = await res.text()
         const results = []
-        const regex = /href="(https:\/\/animefox\.com\.co\/anime\/([^"]+))\/"[^>]*>([^<]+)<\/a>/g
+        const regex = /href="(https:\/\/animefox\.com\.co\/([^"]+)\/)"[^>]*title="([^"]+)"/g
         let match
         while ((match = regex.exec(html)) !== null) {
             const url = match[1]
             const id = match[2]
             const title = match[3].trim()
-            if (id && title && !results.find(r => r.id === id)) {
-                results.push({
-                    id,
-                    title,
-                    url: url + "/",
-                    subOrDub: "sub",
-                })
+            if (
+                id && title &&
+                !id.includes("episode") &&
+                !id.includes("category") &&
+                !id.includes("tag") &&
+                !id.includes("page") &&
+                !results.find(r => r.id === id)
+            ) {
+                results.push({ id, title, url, subOrDub: "sub" })
             }
         }
         return results
     }
 
     async findEpisodes(id) {
-        const res = await fetch(`${this.api}/anime/${id}/`, {
+        // Fetch any episode or series page - all have the full episode list as li[data-id]
+        const res = await fetch(`${this.api}/${id}/`, {
             headers: { "User-Agent": "Mozilla/5.0" }
         })
         if (!res.ok) return []
         const html = await res.text()
         const episodes = []
-        const epRegex = /<li[^>]*data-id="(\d+)"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?Eps\s*(\d+)/g
+
+        // <li data-id="5599" ...><a href="...url..." itemprop="url" title="Yi Ren Zhi Xia 6 Episode 19 English Sub">
+        const liRegex = /<li[^>]*data-id="(\d+)"[^>]*>[\s\S]*?href="([^"]+)"[^>]*title="([^"]+)"/g
         let match
-        while ((match = epRegex.exec(html)) !== null) {
+        while ((match = liRegex.exec(html)) !== null) {
             const postId = match[1]
-            const url = match[2]
-            const epNum = parseInt(match[3])
-            const slugMatch = url.match(/\/([^\/]+)\/$/)
+            const url = match[2].trim()
+            const title = match[3].trim()
+
+            // Extract episode number from title or URL
+            const epNumMatch = title.match(/[Ee]pisode\s+(\d+)/) || url.match(/episode-(\d+)/)
+            if (!epNumMatch) continue
+            const epNum = parseInt(epNumMatch[1])
+
+            const slugMatch = url.match(/animefox\.com\.co\/([^\/]+)\/$/)
             const slug = slugMatch ? slugMatch[1] : postId
+
             episodes.push({
                 id: slug + "|" + postId,
                 number: epNum,
@@ -65,8 +77,8 @@ class Provider {
 
         const parts = ep.id.split("|")
         const slug = parts[0]
-
         const epUrl = ep.url || `${this.api}/${slug}/`
+
         const res = await fetch(epUrl, {
             headers: { "User-Agent": "Mozilla/5.0" }
         })
@@ -77,11 +89,7 @@ class Provider {
         if (!optionMatch) return empty
 
         let decoded
-        try {
-            decoded = atob(optionMatch[1])
-        } catch(e) {
-            return empty
-        }
+        try { decoded = atob(optionMatch[1]) } catch(e) { return empty }
 
         const hashMatch = decoded.match(/data-video="([^"]+)"/)
         if (!hashMatch) return empty
