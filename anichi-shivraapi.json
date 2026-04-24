@@ -2,11 +2,9 @@
   "id": "animefox-seanime",
   "name": "AnimeFox",
   "description": "AnimeFox provider for Seanime - streams via Rumble HLS",
-  "manifestURI": "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/animefox-seanime.json",
   "version": "1.0.0",
   "author": "shditz",
   "lang": "en",
-  "language": "javascript",
   "type": "onlinestream-provider",
-  "payloadURI": "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/provider.js",
+  "payloadURI": "https://raw.githubusercontent.com/wadidchy-boop/Anichi-Seanime/refs/heads/main/anichi-shivraapi.json",
 }
