@@ -1,14 +1,14 @@
 {
   "id": "animefox-seanime",
   "name": "AnimeFox",
-  "description": "Stream anime from AnimeFox. Supports sub only.",
-  "manifestURI": "https://raw.githubusercontent.com/wadidchy-boop/Anichi-Seanime/main/animefox-seanime.json",
-  "version": "1.0.0",
+  "description": "Stream anime from AnimeFox. Supports only sub.",
+  "manifestURI": "https://raw.githubusercontent.com/wadidchy-boop/Anichi-Seanime/main/anichi-shivraapi.json",
+  "version": "1.0.1",
   "author": "shditz",
   "type": "onlinestream-provider",
   "language": "javascript",
   "lang": "en",
-  "website": "https://animefox.com.co",
+  "website": "https://animefox.com.co/",
   "icon": "",
-  "payloadURI": "https://raw.githubusercontent.com/wadidchy-boop/Anichi-Seanime/main/animefox-provider.ts"
+  "payloadURI": "https://raw.githubusercontent.com/wadidchy-boop/Anichi-Seanime/main/provider.ts"
 }
